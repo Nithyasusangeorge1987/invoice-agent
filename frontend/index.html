@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>InvoiceAI — Acme Corp</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,300&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --surface3: #22222e;
+    --border: rgba(255,255,255,0.07);
+    --accent: #6c63ff;
+    --accent2: #ff6584;
+    --accent3: #43e97b;
+    --text: #e8e8f0;
+    --text2: #8888aa;
+    --text3: #5555777;
+    --pending: #f59e0b;
+    --approved: #10b981;
+    --rejected: #ef4444;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); overflow:hidden; }
+
+  /* Layout */
+  .app { display:grid; grid-template-columns:220px 1fr 380px; grid-template-rows:60px 1fr; height:100vh; }
+
+  /* Header */
+  .header { grid-column:1/-1; display:flex; align-items:center; padding:0 24px; gap:16px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .logo { font-family:var(--mono); font-weight:700; font-size:13px; color:var(--accent); letter-spacing:2px; }
+  .logo span { color:var(--text2); }
+  .header-title { flex:1; font-size:13px; color:var(--text2); }
+  .lm-status { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text2); font-family:var(--mono); }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--accent3); box-shadow:0 0 8px var(--accent3); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Sidebar */
+  .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:20px 0; display:flex; flex-direction:column; gap:4px; }
+  .nav-item { display:flex; align-items:center; gap:10px; padding:10px 20px; cursor:pointer; font-size:13px; color:var(--text2); transition:all 0.15s; border-left:2px solid transparent; }
+  .nav-item:hover, .nav-item.active { color:var(--text); background:var(--surface2); border-left-color:var(--accent); }
+  .nav-icon { font-size:16px; width:20px; text-align:center; }
+  .nav-section { font-size:10px; font-family:var(--mono); color:var(--text3); padding:16px 20px 4px; letter-spacing:2px; }
+
+  /* Main */
+  .main { background:var(--bg); overflow-y:auto; display:flex; flex-direction:column; }
+
+  /* Stats bar */
+  .stats-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--border); border-bottom:1px solid var(--border); }
+  .stat { background:var(--surface); padding:20px 24px; }
+  .stat-label { font-size:10px; font-family:var(--mono); color:var(--text2); letter-spacing:1.5px; text-transform:uppercase; }
+  .stat-value { font-size:28px; font-family:var(--mono); font-weight:700; margin-top:6px; color:var(--text); }
+  .stat-value.pending { color:var(--pending); }
+  .stat-value.approved { color:var(--approved); }
+  .stat-value.rejected { color:var(--rejected); }
+  .stat-sub { font-size:11px; color:var(--text2); margin-top:4px; }
+
+  /* Table section */
+  .section { padding:24px; flex:1; }
+  .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .section-title { font-size:12px; font-family:var(--mono); color:var(--text2); letter-spacing:2px; text-transform:uppercase; }
+  .filter-row { display:flex; gap:8px; }
+  .filter-btn { padding:4px 12px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--text2); font-size:11px; font-family:var(--mono); cursor:pointer; transition:all 0.15s; }
+  .filter-btn.active, .filter-btn:hover { border-color:var(--accent); color:var(--accent); background:rgba(108,99,255,0.1); }
+
+  .upload-zone { border:1px dashed var(--border); border-radius:8px; padding:24px; text-align:center; margin-bottom:20px; cursor:pointer; transition:all 0.2s; color:var(--text2); font-size:13px; }
+  .upload-zone:hover { border-color:var(--accent); color:var(--accent); background:rgba(108,99,255,0.05); }
+  .upload-zone input { display:none; }
+  .uploading { color:var(--accent); animation:pulse 1s infinite; }
+
+  /* Invoice table */
+  .invoice-table { width:100%; border-collapse:collapse; }
+  .invoice-table th { text-align:left; padding:10px 12px; font-size:10px; font-family:var(--mono); color:var(--text3); letter-spacing:1.5px; border-bottom:1px solid var(--border); }
+  .invoice-table td { padding:12px; font-size:13px; border-bottom:1px solid rgba(255,255,255,0.03); vertical-align:middle; }
+  .invoice-table tr:hover td { background:rgba(255,255,255,0.02); }
+  .invoice-table tr.selected td { background:rgba(108,99,255,0.08); }
+  .invoice-table tr { cursor:pointer; }
+
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; border-radius:4px; font-size:10px; font-family:var(--mono); font-weight:700; letter-spacing:1px; }
+  .badge.PENDING { background:rgba(245,158,11,0.15); color:var(--pending); }
+  .badge.APPROVED { background:rgba(16,185,129,0.15); color:var(--approved); }
+  .badge.REJECTED { background:rgba(239,68,68,0.15); color:var(--rejected); }
+  .badge::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; }
+
+  .amount { font-family:var(--mono); font-size:13px; }
+  .vendor { font-weight:500; }
+  .inv-id { font-family:var(--mono); font-size:11px; color:var(--text2); }
+
+  /* Detail panel (right) */
+  .panel { background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+  .panel-tabs { display:flex; border-bottom:1px solid var(--border); }
+  .tab { flex:1; padding:14px; text-align:center; font-size:11px; font-family:var(--mono); color:var(--text2); cursor:pointer; border-bottom:2px solid transparent; transition:all 0.15s; }
+  .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .panel-body { flex:1; overflow-y:auto; padding:20px; }
+
+  /* Invoice detail */
+  .detail-header { margin-bottom:20px; }
+  .detail-id { font-family:var(--mono); font-size:11px; color:var(--accent); margin-bottom:4px; }
+  .detail-vendor { font-size:18px; font-weight:700; }
+  .detail-amount { font-family:var(--mono); font-size:28px; color:var(--text); margin-top:4px; }
+  .detail-field { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .detail-label { color:var(--text2); font-family:var(--mono); font-size:10px; letter-spacing:1px; }
+  .detail-value { font-size:13px; }
+  .action-row { display:flex; gap:8px; margin-top:20px; }
+  .btn { flex:1; padding:10px; border-radius:6px; border:none; font-size:12px; font-family:var(--mono); font-weight:700; cursor:pointer; letter-spacing:1px; transition:all 0.2s; }
+  .btn-approve { background:rgba(16,185,129,0.2); color:var(--approved); border:1px solid rgba(16,185,129,0.3); }
+  .btn-approve:hover { background:var(--approved); color:#000; }
+  .btn-reject { background:rgba(239,68,68,0.2); color:var(--rejected); border:1px solid rgba(239,68,68,0.3); }
+  .btn-reject:hover { background:var(--rejected); color:#fff; }
+  .approver-input { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 12px; color:var(--text); font-size:12px; margin-top:12px; font-family:var(--sans); outline:none; }
+  .approver-input:focus { border-color:var(--accent); }
+
+  .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:200px; color:var(--text3); font-size:13px; gap:8px; }
+  .empty-icon { font-size:32px; }
+
+  /* Chat */
+  .chat-messages { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:90%; }
+  .msg.user { align-self:flex-end; }
+  .msg.ai { align-self:flex-start; }
+  .msg-bubble { padding:10px 14px; border-radius:10px; font-size:13px; line-height:1.5; }
+  .msg.user .msg-bubble { background:var(--accent); color:#fff; border-radius:10px 10px 2px 10px; }
+  .msg.ai .msg-bubble { background:var(--surface2); color:var(--text); border-radius:10px 10px 10px 2px; border:1px solid var(--border); }
+  .msg-time { font-size:10px; color:var(--text3); font-family:var(--mono); margin-top:4px; padding:0 4px; }
+  .msg.user .msg-time { text-align:right; }
+  .typing { display:flex; gap:4px; align-items:center; padding:10px 14px; }
+  .typing span { width:6px; height:6px; border-radius:50%; background:var(--text2); animation:typing 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay:0.2s; }
+  .typing span:nth-child(3) { animation-delay:0.4s; }
+  @keyframes typing { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+  .chat-action { background:rgba(67,233,123,0.1); border:1px solid rgba(67,233,123,0.2); border-radius:6px; padding:8px 12px; font-size:11px; font-family:var(--mono); color:var(--accent3); margin-top:6px; }
+  .chat-input-row { display:flex; gap:8px; padding:16px; border-top:1px solid var(--border); }
+  .chat-input { flex:1; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; color:var(--text); font-size:13px; font-family:var(--sans); outline:none; resize:none; }
+  .chat-input:focus { border-color:var(--accent); }
+  .send-btn { background:var(--accent); border:none; border-radius:8px; padding:10px 14px; color:#fff; cursor:pointer; font-size:16px; transition:opacity 0.2s; }
+  .send-btn:hover { opacity:0.8; }
+  .send-btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+  /* Quick actions */
+  .quick-actions { padding:0 16px 8px; display:flex; flex-wrap:wrap; gap:6px; }
+  .quick-btn { padding:4px 10px; border:1px solid var(--border); border-radius:20px; font-size:11px; color:var(--text2); cursor:pointer; background:transparent; transition:all 0.15s; white-space:nowrap; }
+  .quick-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--surface3); border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">INVOICE<span>AI</span></div>
+    <div class="header-title">Acme Corp · Finance Intelligence Platform</div>
+    <div class="lm-status"><div class="dot"></div> LM Studio · Local</div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="nav-section">WORKSPACE</div>
+    <div class="nav-item active" onclick="setView('invoices')">
+      <span class="nav-icon">📄</span> Invoices
+    </div>
+    <div class="nav-item" onclick="setView('upload')">
+      <span class="nav-icon">📤</span> Upload
+    </div>
+    <div class="nav-section">SYSTEM</div>
+    <div class="nav-item" onclick="seedData()">
+      <span class="nav-icon">🌱</span> Load Demo Data
+    </div>
+    <div class="nav-item" style="margin-top:auto">
+      <span class="nav-icon">⚙️</span> Settings
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main" id="main-content">
+    <!-- Stats -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat"><div class="stat-label">TOTAL</div><div class="stat-value" id="stat-total">—</div></div>
+      <div class="stat"><div class="stat-label">PENDING</div><div class="stat-value pending" id="stat-pending">—</div></div>
+      <div class="stat"><div class="stat-label">APPROVED</div><div class="stat-value approved" id="stat-approved">—</div></div>
+      <div class="stat"><div class="stat-label">APPROVED VALUE</div><div class="stat-value" id="stat-value" style="font-size:18px;margin-top:10px">—</div></div>
+    </div>
+
+    <!-- Invoice List -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">INVOICES</div>
+        <div class="filter-row">
+          <button class="filter-btn active" onclick="filterInvoices(null, this)">ALL</button>
+          <button class="filter-btn" onclick="filterInvoices('PENDING', this)">PENDING</button>
+          <button class="filter-btn" onclick="filterInvoices('APPROVED', this)">APPROVED</button>
+          <button class="filter-btn" onclick="filterInvoices('REJECTED', this)">REJECTED</button>
+        </div>
+      </div>
+
+      <!-- Upload zone -->
+      <div class="upload-zone" onclick="document.getElementById('file-input').click()" id="upload-zone">
+        <input type="file" id="file-input" accept=".txt,.pdf,.csv" onchange="uploadFile(event)"/>
+        <div id="upload-text">📎 Drop invoice file here or click to upload · .txt .pdf .csv</div>
+      </div>
+
+      <table class="invoice-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>VENDOR</th><th>INVOICE #</th><th>AMOUNT</th><th>DUE DATE</th><th>STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="invoice-body">
+          <tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📭</div>No invoices yet. Load demo data or upload a file.</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Right Panel -->
+  <aside class="panel">
+    <div class="panel-tabs">
+      <div class="tab active" onclick="setTab('detail')">DETAIL</div>
+      <div class="tab" onclick="setTab('chat')">AI AGENT</div>
+    </div>
+
+    <!-- Detail tab -->
+    <div class="panel-body" id="tab-detail">
+      <div class="empty-state">
+        <div class="empty-icon">👆</div>
+        Select an invoice to review
+      </div>
+    </div>
+
+    <!-- Chat tab -->
+    <div id="tab-chat" style="display:none; flex:1; flex-direction:column; overflow:hidden; display:none;">
+      <div class="chat-messages" id="chat-messages">
+        <div class="msg ai">
+          <div class="msg-bubble">Hi! I'm your Invoice AI Agent. Ask me about invoice status, approvals, or get a summary. I'm connected to your local LM Studio.</div>
+          <div class="msg-time">just now</div>
+        </div>
+      </div>
+      <div class="quick-actions">
+        <button class="quick-btn" onclick="sendQuick('Show pending invoices')">Pending invoices</button>
+        <button class="quick-btn" onclick="sendQuick('Give me a summary')">Summary report</button>
+        <button class="quick-btn" onclick="sendQuick('What is the highest value invoice?')">Highest value</button>
+      </div>
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="chat-input" rows="1" placeholder="Ask about invoices..." onkeydown="chatKey(event)"></textarea>
+        <button class="send-btn" onclick="sendChat()" id="send-btn">➤</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+let allInvoices = [];
+let selectedInvoice = null;
+let currentFilter = null;
+let currentTab = 'detail';
+
+// ─── INIT ──────────────────────────────────────────────────────────────────
+
+async function init() {
+  await loadStats();
+  await loadInvoices();
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch(`${API}/stats`);
+    const s = await r.json();
+    document.getElementById('stat-total').textContent = s.total;
+    document.getElementById('stat-pending').textContent = s.pending;
+    document.getElementById('stat-approved').textContent = s.approved;
+    document.getElementById('stat-value').textContent = `€${s.approved_value.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+  } catch(e) {
+    document.getElementById('stat-total').textContent = 'ERR';
+  }
+}
+
+async function loadInvoices(filter = currentFilter) {
+  const url = filter ? `${API}/invoices?status=${filter}` : `${API}/invoices`;
+  try {
+    const r = await fetch(url);
+    allInvoices = await r.json();
+    renderTable(allInvoices);
+  } catch(e) {
+    document.getElementById('invoice-body').innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">⚠️</div>Cannot connect to backend. Is FastAPI running on :8000?</div></td></tr>`;
+  }
+}
+
+function renderTable(invoices) {
+  const body = document.getElementById('invoice-body');
+  if (!invoices.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📭</div>No invoices found.</div></td></tr>`;
+    return;
+  }
+  body.innerHTML = invoices.map(inv => `
+    <tr onclick="selectInvoice('${inv.id}')" ${selectedInvoice?.id === inv.id ? 'class="selected"' : ''}>
+      <td><div class="inv-id">${inv.id}</div></td>
+      <td><div class="vendor">${inv.vendor_name || '—'}</div></td>
+      <td><div class="inv-id">${inv.invoice_number || '—'}</div></td>
+      <td><div class="amount">${inv.currency} ${(inv.total_amount||0).toLocaleString('de-DE', {minimumFractionDigits:2})}</div></td>
+      <td style="color:var(--text2); font-size:12px">${inv.due_date || '—'}</td>
+      <td><span class="badge ${inv.status}">${inv.status}</span></td>
+    </tr>
+  `).join('');
+}
+
+// ─── FILTER ────────────────────────────────────────────────────────────────
+
+function filterInvoices(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadInvoices(status);
+}
+
+// ─── UPLOAD ────────────────────────────────────────────────────────────────
+
+async function uploadFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const zone = document.getElementById('upload-zone');
+  const txt = document.getElementById('upload-text');
+  txt.innerHTML = `<span class="uploading">⚡ Processing with LM Studio AI...</span>`;
+  
+  const fd = new FormData();
+  fd.append('file', file);
+  
+  try {
+    const r = await fetch(`${API}/invoices/upload`, { method:'POST', body:fd });
+    const data = await r.json();
+    txt.innerHTML = `✅ Extracted! Invoice ID: <b>${data.invoice_id}</b> · ${data.extracted?.vendor_name || 'Unknown vendor'} · ${data.extracted?.currency || ''} ${data.extracted?.total_amount || ''}`;
+    await loadStats();
+    await loadInvoices();
+    selectInvoice(data.invoice_id);
+  } catch(err) {
+    txt.innerHTML = `⚠️ Upload failed: ${err.message}`;
+  }
+  e.target.value = '';
+}
+
+// ─── SELECT INVOICE ────────────────────────────────────────────────────────
+
+async function selectInvoice(id) {
+  try {
+    const r = await fetch(`${API}/invoices/${id}`);
+    selectedInvoice = await r.json();
+    renderDetail(selectedInvoice);
+    renderTable(allInvoices); // refresh selection highlight
+    setTab('detail');
+  } catch(e) {}
+}
+
+function renderDetail(inv) {
+  document.getElementById('tab-detail').innerHTML = `
+    <div class="detail-header">
+      <div class="detail-id">${inv.id} · <span class="badge ${inv.status}">${inv.status}</span></div>
+      <div class="detail-vendor">${inv.vendor_name || 'Unknown Vendor'}</div>
+      <div class="detail-amount">${inv.currency} ${(inv.total_amount||0).toLocaleString('de-DE', {minimumFractionDigits:2})}</div>
+    </div>
+    <div class="detail-field"><span class="detail-label">INVOICE #</span><span>${inv.invoice_number || '—'}</span></div>
+    <div class="detail-field"><span class="detail-label">DATE</span><span>${inv.invoice_date || '—'}</span></div>
+    <div class="detail-field"><span class="detail-label">DUE DATE</span><span>${inv.due_date || '—'}</span></div>
+    <div class="detail-field"><span class="detail-label">SUBTOTAL</span><span>${inv.currency} ${(inv.subtotal||0).toLocaleString('de-DE', {minimumFractionDigits:2})}</span></div>
+    <div class="detail-field"><span class="detail-label">TAX</span><span>${inv.currency} ${(inv.tax_amount||0).toLocaleString('de-DE', {minimumFractionDigits:2})}</span></div>
+    <div class="detail-field"><span class="detail-label">PAYMENT TERMS</span><span>${inv.payment_terms || '—'}</span></div>
+    ${inv.approver ? `<div class="detail-field"><span class="detail-label">APPROVER</span><span>${inv.approver}</span></div>` : ''}
+    ${inv.approver_comment ? `<div class="detail-field"><span class="detail-label">COMMENT</span><span>${inv.approver_comment}</span></div>` : ''}
+    
+    ${inv.status === 'PENDING' ? `
+    <input class="approver-input" id="approver-name" placeholder="Your name (approver)…" value="Finance Manager"/>
+    <input class="approver-input" id="approver-comment" placeholder="Optional comment…" style="margin-top:6px"/>
+    <div class="action-row">
+      <button class="btn btn-approve" onclick="doApproval('approve')">✓ APPROVE</button>
+      <button class="btn btn-reject" onclick="doApproval('reject')">✗ REJECT</button>
+    </div>
+    ` : `<div style="margin-top:20px; padding:12px; background:var(--surface2); border-radius:6px; font-size:12px; color:var(--text2); font-family:var(--mono);">Invoice ${inv.status.toLowerCase()} — no further action needed</div>`}
+  `;
+}
+
+async function doApproval(action) {
+  if (!selectedInvoice) return;
+  const approver = document.getElementById('approver-name')?.value || 'Manager';
+  const comment = document.getElementById('approver-comment')?.value || '';
+  
+  try {
+    const r = await fetch(`${API}/invoices/${selectedInvoice.id}/approve`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action, approver, comment })
+    });
+    const data = await r.json();
+    await loadStats();
+    await loadInvoices();
+    await selectInvoice(selectedInvoice.id);
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// ─── SEED ─────────────────────────────────────────────────────────────────
+
+async function seedData() {
+  try {
+    await fetch(`${API}/seed`, { method:'POST' });
+    await loadStats();
+    await loadInvoices();
+  } catch(e) { alert('Backend not running. Start: uvicorn main:app --reload'); }
+}
+
+// ─── TABS ─────────────────────────────────────────────────────────────────
+
+function setTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', (i === 0 && tab === 'detail') || (i === 1 && tab === 'chat'));
+  });
+  document.getElementById('tab-detail').style.display = tab === 'detail' ? 'block' : 'none';
+  const chatEl = document.getElementById('tab-chat');
+  chatEl.style.display = tab === 'chat' ? 'flex' : 'none';
+  chatEl.style.flexDirection = 'column';
+  chatEl.style.flex = '1';
+  chatEl.style.overflow = 'hidden';
+}
+
+function setView(v) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+}
+
+// ─── CHAT ─────────────────────────────────────────────────────────────────
+
+let chatHistory = [];
+
+function chatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function sendQuick(msg) {
+  document.getElementById('chat-input').value = msg;
+  sendChat();
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  appendMsg('user', msg);
+  
+  const sendBtn = document.getElementById('send-btn');
+  sendBtn.disabled = true;
+  
+  // Show typing
+  const typingId = 'typing-' + Date.now();
+  const msgs = document.getElementById('chat-messages');
+  msgs.innerHTML += `<div id="${typingId}" class="msg ai"><div class="msg-bubble"><div class="typing"><span></span><span></span><span></span></div></div></div>`;
+  msgs.scrollTop = msgs.scrollHeight;
+
+  try {
+    const r = await fetch(`${API}/chat`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message: msg, session_id: 'dashboard' })
+    });
+    const data = await r.json();
+    document.getElementById(typingId)?.remove();
+    appendMsg('ai', data.message, data.action_taken);
+    if (data.action_taken) { await loadStats(); await loadInvoices(); }
+  } catch(e) {
+    document.getElementById(typingId)?.remove();
+    appendMsg('ai', '⚠️ Cannot reach backend. Is FastAPI running on port 8000?');
+  }
+  sendBtn.disabled = false;
+}
+
+function appendMsg(role, text, action = null) {
+  const msgs = document.getElementById('chat-messages');
+  const time = new Date().toLocaleTimeString('en-DE', {hour:'2-digit', minute:'2-digit'});
+  const actionHTML = action ? `<div class="chat-action">⚡ Action: ${action.type?.toUpperCase()} ${action.invoice_id || ''}</div>` : '';
+  msgs.innerHTML += `
+    <div class="msg ${role}">
+      <div class="msg-bubble">${text.replace(/\n/g,'<br>')}</div>
+      ${actionHTML}
+      <div class="msg-time">${time}</div>
+    </div>`;
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+init();
+</script>
+</body>
+</html>
