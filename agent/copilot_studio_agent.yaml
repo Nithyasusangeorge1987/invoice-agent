@@ -1,0 +1,205 @@
+# Copilot Studio Agent Definition
+# Agent: Invoice AI Assistant for Acme Corp Finance Team
+# Purpose: Natural language interface for invoice queries, approvals, and reporting
+# Target deployment: Microsoft Copilot Studio → Teams integration
+
+agent:
+  name: "InvoiceBot"
+  display_name: "Invoice AI Assistant"
+  description: "Conversational agent for invoice status queries, approvals, and finance reporting"
+  language: "en-US"
+  icon: "💼"
+  welcome_message: |
+    Hi! I'm your Invoice AI Assistant. I can help you with:
+    - Check invoice status ("What's the status of INV001?")
+    - Approve or reject invoices ("Approve invoice INV003")
+    - Get summaries ("Show me all pending invoices")
+    - Find invoices by vendor ("Find all invoices from Acme Supplies")
+    
+    What would you like to do today?
+
+# ─── TOPICS ────────────────────────────────────────────────────────────────
+
+topics:
+
+  # Topic 1: Check Invoice Status
+  - name: "Check Invoice Status"
+    trigger_phrases:
+      - "what is the status of my invoice"
+      - "check invoice status"
+      - "where is my invoice"
+      - "invoice status"
+      - "status of invoice"
+    entities:
+      - name: InvoiceID
+        type: string
+        prompt: "What is the Invoice ID? (e.g. INV001)"
+    actions:
+      - type: http_call
+        name: GetInvoiceStatus
+        method: GET
+        url: "{{FASTAPI_BASE_URL}}/invoices/{InvoiceID}"
+        output_variable: InvoiceData
+    response: |
+      Here's the status for invoice **{InvoiceID}**:
+      - **Vendor**: {InvoiceData.vendor_name}
+      - **Amount**: {InvoiceData.currency} {InvoiceData.total_amount}
+      - **Status**: {InvoiceData.status}
+      - **Due Date**: {InvoiceData.due_date}
+      
+      Would you like to approve, reject, or get more details?
+
+  # Topic 2: Approve Invoice
+  - name: "Approve Invoice"
+    trigger_phrases:
+      - "approve invoice"
+      - "approve this invoice"
+      - "i want to approve"
+      - "mark as approved"
+      - "sign off on invoice"
+    entities:
+      - name: InvoiceID
+        type: string
+        prompt: "Which invoice would you like to approve? (enter Invoice ID)"
+      - name: ApproverName
+        type: string
+        prompt: "What is your name?"
+      - name: ApprovalComment
+        type: string
+        prompt: "Any comments for the approval? (or say 'none')"
+    confirmation:
+      message: "You're about to APPROVE invoice {InvoiceID}. Confirm? (yes/no)"
+    actions:
+      - type: http_call
+        name: ApproveInvoice
+        method: POST
+        url: "{{FASTAPI_BASE_URL}}/invoices/{InvoiceID}/approve"
+        body:
+          action: "approve"
+          approver: "{ApproverName}"
+          comment: "{ApprovalComment}"
+    response: |
+      ✅ Invoice **{InvoiceID}** has been **approved** by {ApproverName}.
+      The finance team has been notified.
+
+  # Topic 3: Reject Invoice
+  - name: "Reject Invoice"
+    trigger_phrases:
+      - "reject invoice"
+      - "decline invoice"
+      - "i want to reject"
+      - "deny this invoice"
+    entities:
+      - name: InvoiceID
+        type: string
+        prompt: "Which invoice would you like to reject?"
+      - name: ApproverName
+        type: string
+        prompt: "What is your name?"
+      - name: RejectionReason
+        type: string
+        prompt: "Please provide a reason for rejection:"
+    confirmation:
+      message: "You're about to REJECT invoice {InvoiceID}. This will notify the vendor. Confirm? (yes/no)"
+    actions:
+      - type: http_call
+        name: RejectInvoice
+        method: POST
+        url: "{{FASTAPI_BASE_URL}}/invoices/{InvoiceID}/approve"
+        body:
+          action: "reject"
+          approver: "{ApproverName}"
+          comment: "{RejectionReason}"
+    response: |
+      ❌ Invoice **{InvoiceID}** has been **rejected**.
+      Reason recorded: {RejectionReason}
+      The submitter will be notified.
+
+  # Topic 4: List Pending Invoices
+  - name: "List Pending Invoices"
+    trigger_phrases:
+      - "show pending invoices"
+      - "what needs approval"
+      - "invoices waiting for approval"
+      - "pending invoices"
+      - "what invoices need review"
+    actions:
+      - type: http_call
+        name: GetPendingInvoices
+        method: GET
+        url: "{{FASTAPI_BASE_URL}}/invoices?status=PENDING"
+        output_variable: PendingList
+    response: |
+      Here are the invoices currently awaiting approval:
+      {PendingList}
+      
+      Would you like to approve any of these?
+
+  # Topic 5: Invoice Summary / Report
+  - name: "Invoice Summary Report"
+    trigger_phrases:
+      - "give me a summary"
+      - "invoice report"
+      - "how many invoices"
+      - "total invoices this month"
+      - "stats"
+    actions:
+      - type: http_call
+        name: GetStats
+        method: GET
+        url: "{{FASTAPI_BASE_URL}}/stats"
+        output_variable: Stats
+    response: |
+      📊 **Invoice Summary**:
+      - Total invoices: {Stats.total}
+      - ⏳ Pending: {Stats.pending}
+      - ✅ Approved: {Stats.approved} (Total value: {Stats.approved_value})
+      - ❌ Rejected: {Stats.rejected}
+
+  # Topic 6: AI Free Text Query (Fallback)
+  - name: "AI Free Text Query"
+    trigger_phrases:
+      - "*"  # fallback - routes all unmatched queries to AI backend
+    actions:
+      - type: http_call
+        name: ChatWithAI
+        method: POST
+        url: "{{FASTAPI_BASE_URL}}/chat"
+        body:
+          message: "{UserInput}"
+          session_id: "{ConversationID}"
+        output_variable: AIResponse
+    response: "{AIResponse.message}"
+
+# ─── CONNECTIONS ───────────────────────────────────────────────────────────
+
+connections:
+  - name: "FastAPI Backend"
+    type: HTTP
+    base_url: "{{FASTAPI_BASE_URL}}"
+    authentication: none
+    note: "Points to local FastAPI backend via ngrok. In production, deployed to Azure App Service."
+
+  - name: "SharePoint Invoices List"
+    type: SharePoint
+    site: "https://fraunhofer-my.sharepoint.com/personal/nithya_susan_george_iem_fraunhofer_de"
+    list: "Invoices"
+
+# ─── DEPLOYMENT NOTES ──────────────────────────────────────────────────────
+
+deployment_notes:
+  implementation_status: "DESIGNED - Functional equivalent implemented in FastAPI /chat endpoint"
+  rationale: |
+    The Copilot Studio agent is defined here with full topic specification. For the
+    working demo, the conversational layer was implemented directly in the FastAPI
+    backend (/chat endpoint) to keep the entire stack running locally with LM Studio,
+    ensuring zero external data exposure — a core goal of this privacy-sensitive
+    finance workflow. The /chat endpoint provides the same 6 functional topics:
+    status checks, approvals, rejections, pending lists, summary reports, and
+    free-text AI queries. The architecture maps 1:1 to Copilot Studio topics.
+  production_path: |
+    1. Import this YAML into Copilot Studio (make.powerapps.com → Copilot Studio)
+    2. Create each topic using the trigger phrases above
+    3. For each HTTP action, create a Power Automate flow that calls FastAPI
+    4. Set the fallback topic to route to /chat endpoint
+    5. Publish to Teams: Publish → Make available in Teams channel

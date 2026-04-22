@@ -6,7 +6,6 @@ import uuid
 import httpx
 import re
 from datetime import datetime
-from pathlib import Path
 from models import ApprovalRequest, ChatMessage, ChatResponse
 from database import init_db, get_db_connection
 
@@ -27,6 +26,8 @@ async def startup():
     init_db()
 
 
+# --- AI CALL ------------------------------------------------------------------
+
 async def call_lm_studio(messages: list, json_mode: bool = False) -> str:
     payload = {
         "model": "local-model",
@@ -45,6 +46,8 @@ async def call_lm_studio(messages: list, json_mode: bool = False) -> str:
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"LM Studio error: {str(e)}")
 
+
+# --- EXTRACTION ---------------------------------------------------------------
 
 async def extract_invoice_data(text_content: str) -> dict:
     try:
@@ -87,15 +90,7 @@ async def extract_invoice_data(text_content: str) -> dict:
         }
 
 
-@app.post("/invoices/upload")
-async def upload_invoice(file: UploadFile = File(...)):
-    """Upload invoice file - extract with AI - store in DB"""
-    content = await file.read()
-    try:
-        text_content = content.decode("utf-8")
-    except UnicodeDecodeError:
-        text_content = f"[Binary file: {file.filename}]"
-
+async def save_invoice(text_content: str, filename: str) -> dict:
     extracted = await extract_invoice_data(text_content)
     invoice_id = str(uuid.uuid4())[:8].upper()
     now = datetime.utcnow().isoformat()
@@ -107,7 +102,7 @@ async def upload_invoice(file: UploadFile = File(...)):
         payment_terms, notes, status, created_at, updated_at, raw_text)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        invoice_id, file.filename,
+        invoice_id, filename,
         extracted.get("vendor_name", ""),
         extracted.get("invoice_number", ""),
         extracted.get("invoice_date", ""),
@@ -125,17 +120,51 @@ async def upload_invoice(file: UploadFile = File(...)):
     ))
     conn.commit()
     conn.close()
-
     return {"invoice_id": invoice_id, "status": "PENDING", "extracted": extracted}
+
+
+# --- ROUTES -------------------------------------------------------------------
+
+@app.post("/invoices/upload")
+async def upload_invoice(file: UploadFile = File(...)):
+    """Upload invoice file - extract with AI - store in DB"""
+    content = await file.read()
+    try:
+        text_content = content.decode("utf-8")
+    except UnicodeDecodeError:
+        text_content = f"[Binary file: {file.filename}]"
+    return await save_invoice(text_content, file.filename)
+
+
+@app.post("/invoices/from-email")
+async def invoice_from_email(data: dict):
+    """Accept invoice data from Power Automate as JSON"""
+    import html
+    body = data.get("body", "")
+    # Strip HTML tags
+    body = re.sub(r'<[^>]+>', ' ', body)
+    body = html.unescape(body)
+    # Only take first 500 chars — before notification email content
+    body = body[:500]
+    body = re.sub(r'\s+', ' ', body).strip()
+    
+    subject = data.get("subject", "")
+    text_content = subject + "\n" + body
+    filename = subject[:50] + ".txt"
+    return await save_invoice(text_content, filename)
 
 
 @app.get("/invoices")
 async def list_invoices(status: str = None):
     conn = get_db_connection()
     if status:
-        rows = conn.execute("SELECT * FROM invoices WHERE status=? ORDER BY created_at DESC", (status,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM invoices WHERE status=? ORDER BY created_at DESC", (status,)
+        ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM invoices ORDER BY created_at DESC").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM invoices ORDER BY created_at DESC"
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -161,8 +190,10 @@ async def approve_invoice(invoice_id: str, req: ApprovalRequest):
         raise HTTPException(404, "Invoice not found")
     new_status = "APPROVED" if req.action == "approve" else "REJECTED"
     now = datetime.utcnow().isoformat()
-    conn.execute("UPDATE invoices SET status=?, approver=?, approver_comment=?, updated_at=? WHERE id=?",
-                 (new_status, req.approver, req.comment, now, invoice_id))
+    conn.execute(
+        "UPDATE invoices SET status=?, approver=?, approver_comment=?, updated_at=? WHERE id=?",
+        (new_status, req.approver, req.comment, now, invoice_id)
+    )
     conn.commit()
     conn.close()
     return {"invoice_id": invoice_id, "status": new_status}
@@ -175,15 +206,25 @@ async def get_stats():
     pending = conn.execute("SELECT COUNT(*) FROM invoices WHERE status='PENDING'").fetchone()[0]
     approved = conn.execute("SELECT COUNT(*) FROM invoices WHERE status='APPROVED'").fetchone()[0]
     rejected = conn.execute("SELECT COUNT(*) FROM invoices WHERE status='REJECTED'").fetchone()[0]
-    total_val = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE status='APPROVED'").fetchone()[0] or 0
+    total_val = conn.execute(
+        "SELECT SUM(total_amount) FROM invoices WHERE status='APPROVED'"
+    ).fetchone()[0] or 0
     conn.close()
-    return {"total": total, "pending": pending, "approved": approved, "rejected": rejected, "approved_value": total_val}
+    return {
+        "total": total, "pending": pending,
+        "approved": approved, "rejected": rejected,
+        "approved_value": total_val
+    }
 
+
+# --- CHAT AGENT ---------------------------------------------------------------
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(msg: ChatMessage):
     conn = get_db_connection()
-    invoices = conn.execute("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 20").fetchall()
+    invoices = conn.execute(
+        "SELECT * FROM invoices ORDER BY created_at DESC LIMIT 20"
+    ).fetchall()
     conn.close()
 
     invoice_summary = json.dumps([{
@@ -199,7 +240,7 @@ RULES:
 - Reply ONLY in plain English sentences. No JSON. No curly braces.
 - Good: "Invoice INV003 from Cloud Services Ltd is APPROVED, amount USD 899.99, due 2024-02-20."
 - Keep replies under 3 sentences.
-- If user wants to approve/reject, end with: ACTION: approve INV001"""
+- If user wants to approve/reject, end with a new line: ACTION: approve INV001"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -213,8 +254,13 @@ RULES:
     if not response_text or len(response_text) < 5:
         user_lower = msg.message.lower()
         for inv in invoices:
-            if inv["id"].lower() in user_lower or (inv["vendor_name"] and inv["vendor_name"].lower() in user_lower):
-                response_text = f"Invoice {inv['id']} from {inv['vendor_name']} is {inv['status']}. Amount: {inv['currency']} {inv['total_amount']}, due {inv['due_date']}."
+            if inv["id"].lower() in user_lower or (
+                inv["vendor_name"] and inv["vendor_name"].lower() in user_lower
+            ):
+                response_text = (
+                    f"Invoice {inv['id']} from {inv['vendor_name']} is {inv['status']}. "
+                    f"Amount: {inv['currency']} {inv['total_amount']}, due {inv['due_date']}."
+                )
                 break
         if not response_text:
             response_text = "I could not find that invoice. Please check the ID and try again."
@@ -229,8 +275,10 @@ RULES:
                 conn = get_db_connection()
                 new_status = "APPROVED" if action["type"] == "approve" else "REJECTED"
                 now = datetime.utcnow().isoformat()
-                conn.execute("UPDATE invoices SET status=?, approver=?, updated_at=? WHERE id=?",
-                             (new_status, "Chat Agent", now, action["invoice_id"]))
+                conn.execute(
+                    "UPDATE invoices SET status=?, approver=?, updated_at=? WHERE id=?",
+                    (new_status, "Chat Agent", now, action["invoice_id"])
+                )
                 conn.commit()
                 conn.close()
         except Exception:
@@ -238,6 +286,8 @@ RULES:
 
     return ChatResponse(message=response_text, action_taken=action)
 
+
+# --- SEED ---------------------------------------------------------------------
 
 @app.post("/seed")
 async def seed_demo_data():
